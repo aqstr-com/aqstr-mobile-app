@@ -1,0 +1,3 @@
+repository: https://github.com/aqstr-com/aqstr-mobile-app
+assets:
+  - .*.apk
