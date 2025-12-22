@@ -309,28 +309,6 @@ export async function publishToNostr(signedEvent: any, relays: string[] = ["wss:
   }
 }
 
-/**
- * Fetch user profile data
- */
-export async function fetchUserProfile(sessionCookie?: string): Promise<{ authenticated: boolean; user?: any }> {
-  try {
-    const headers: Record<string, string> = {};
-    if (sessionCookie) {
-      headers["Cookie"] = sessionCookie;
-    }
-
-    const response = await fetch(`${API_BASE_URL}/api/test-auth`, {
-      headers,
-      credentials: "include",
-    });
-
-    const data = await response.json();
-    return data;
-  } catch (error) {
-    console.error("Profile fetch error:", error);
-    return { authenticated: false };
-  }
-}
 
 /**
  * Response from available tasks API with eligibility and completions

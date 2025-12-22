@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "242463342156",
+    "project_id": "aqstr-26113",
+    "storage_bucket": "aqstr-26113.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:242463342156:android:adadb3aa411ffedec1bee9",
+        "android_client_info": {
+          "package_name": "com.aqstr.app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyCz-kMrHT_HXAJhtBrq-tuB43ZqEx-nvU0"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

@@ -1,7 +1,7 @@
 {
   "expo": {
-    "name": "aqstr-mobile",
-    "slug": "aqstr-mobile",
+    "name": "aqstr",
+    "slug": "aqstr",
     "version": "1.0.0",
     "orientation": "portrait",
     "icon": "./assets/icon.png",
@@ -23,7 +23,7 @@
       },
       "edgeToEdgeEnabled": true,
       "predictiveBackGestureEnabled": false,
-      "package": "com.aqstrmobile.app",
+      "package": "com.aqstr.app",
       "googleServicesFile": "./google-services.json"
     },
     "web": {
