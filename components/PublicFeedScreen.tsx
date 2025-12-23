@@ -246,7 +246,7 @@ export function PublicFeedScreen({
 
         try {
             setError(null);
-            const isDefaultPublicFeed = npub === '6398e15e3416de093b963ca38783d2a66a9657cb08cbba4f02546cdd55b6f1a4';
+            const isDefaultPublicFeed = npub === '6c27a5aa02b769c6b51fd7edd80c5b21b9ba32c16d913b2bc8e1617fb4573680';
             const notes = isDefaultPublicFeed ? undefined : 'authored';
             const result = await fetchPublicFeed(npub, until, 20, user?.pubkey, notes);
 

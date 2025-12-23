@@ -13,6 +13,7 @@ import {
     TextInput,
     Modal,
     Image,
+    Linking,
 } from 'react-native';
 import { useAuth } from '../../../contexts/AuthContext';
 import { getNsec } from '../../../lib/storage';
@@ -33,6 +34,7 @@ import {
     type CompletedActions,
 } from '../../../lib/api';
 import ConfettiExplosion from '../../../components/ConfettiExplosion';
+import FollowModal from '../../../components/FollowModal';
 
 interface TaskDetailScreenProps {
     taskId: string;
@@ -123,6 +125,9 @@ export default function TaskDetailScreen({ taskId, onBack }: TaskDetailScreenPro
     const [replyContent, setReplyContent] = useState('');
     const [quoteContent, setQuoteContent] = useState('');
     const [showConfetti, setShowConfetti] = useState(false);
+    const [isContentExpanded, setIsContentExpanded] = useState(false);
+    const [followModalVisible, setFollowModalVisible] = useState(false);
+
 
     useEffect(() => {
         if (taskId) {
@@ -151,6 +156,38 @@ export default function TaskDetailScreen({ taskId, onBack }: TaskDetailScreenPro
             setError((err as Error).message);
         } finally {
             setIsLoading(false);
+        }
+    };
+
+    // Helper function to extract image URLs from content
+    const extractImages = (content: string): string[] => {
+        const imageRegex = /(https?:\/\/[^\s]+\.(?:jpg|jpeg|png|gif|webp|bmp|svg)(?:\?[^\s]*)?)/gi;
+        const imgurRegex = /(https?:\/\/i\.imgur\.com\/[^\s]+)/gi;
+        const matches = [...(content.match(imageRegex) || []), ...(content.match(imgurRegex) || [])];
+        return [...new Set(matches)]; // Remove duplicates
+    };
+
+    // Helper function to clean content by removing media URLs
+    const cleanContent = (content: string): string => {
+        const imageRegex = /(https?:\/\/[^\s]+\.(?:jpg|jpeg|png|gif|webp|bmp|svg)(?:\?[^\s]*)?)/gi;
+        const videoRegex = /(https?:\/\/[^\s]+\.(?:mp4|webm|ogg|mov)(?:\?[^\s]*)?)/gi;
+        const imgurRegex = /(https?:\/\/i\.imgur\.com\/[^\s]+)/gi;
+        const youtubeRegex = /(?:https?:\/\/)?(?:www\.)?(?:youtube\.com\/watch\?v=[^\s]+|youtu\.be\/[^\s]+)/gi;
+        const nostrRegex = /nostr:[a-zA-Z0-9_\-]+/gi;
+
+        return content
+            .replace(imageRegex, '')
+            .replace(videoRegex, '')
+            .replace(imgurRegex, '')
+            .replace(youtubeRegex, '')
+            .replace(nostrRegex, '')
+            .replace(/\s+/g, ' ')
+            .trim();
+    };
+
+    const handleViewEvent = () => {
+        if (task?.eventId) {
+            Linking.openURL(`https://primal.net/e/${task.eventId}`);
         }
     };
 
@@ -194,10 +231,6 @@ export default function TaskDetailScreen({ taskId, onBack }: TaskDetailScreenPro
                             return;
                         }
                         signedEvent = signReplyEvent(nsec, task.eventId, task.merchant.pubkey, content);
-                        break;
-                    case 'follow':
-                        // Follow the merchant - creates a kind 3 event with the merchant in follow list
-                        signedEvent = signFollowEvent(nsec, [task.merchant.pubkey]);
                         break;
                     default:
                         throw new Error('Unknown action type');
@@ -337,12 +370,23 @@ export default function TaskDetailScreen({ taskId, onBack }: TaskDetailScreenPro
                             </View>
                         </View>
                     </View>
+                </View>
 
-                    <View style={styles.earningsCard}>
-                        <Text style={styles.earningsLabel}>Your Earnings</Text>
-                        <Text style={styles.earningsValue}>
-                            ⚡ {totalEarnings.toLocaleString()} / {maxEarnings.toLocaleString()}
-                        </Text>
+                {/* Stats Grid */}
+                <View style={styles.statsGrid}>
+                    <View style={styles.statCard}>
+                        <Text style={styles.statLabel}>Your Earnings</Text>
+                        <View style={styles.statValueContainer}>
+                            <Text style={styles.statValue}>⚡ {totalEarnings.toLocaleString()}</Text>
+                            <Text style={styles.statSubValue}>/ {maxEarnings.toLocaleString()}</Text>
+                        </View>
+                    </View>
+                    <View style={styles.statCard}>
+                        <Text style={styles.statLabel}>Remaining</Text>
+                        <View style={styles.statValueContainer}>
+                            <Text style={styles.statValue}>{task.remainingBudget?.toLocaleString()}</Text>
+                            <Text style={styles.statSubValue}> sats</Text>
+                        </View>
                     </View>
                 </View>
 
@@ -391,19 +435,71 @@ export default function TaskDetailScreen({ taskId, onBack }: TaskDetailScreenPro
                     </View>
                 )}
 
-                {/* Task Content */}
-                <View style={styles.taskContent}>
-                    <Text style={styles.taskTitle}>{task.title}</Text>
-                    {task.description ? (
-                        <Text style={styles.taskDescription}>{task.description}</Text>
-                    ) : null}
-                    <View style={styles.budgetRow}>
-                        <Text style={styles.budgetLabel}>Budget Remaining:</Text>
-                        <Text style={styles.budgetValue}>
-                            {task.remainingBudget?.toLocaleString()} sats
-                        </Text>
+
+                {/* Original Post Content */}
+                {task.type === 'NOSTR_BOOST' && task.eventContent && (
+                    <View style={styles.contentSection}>
+                        <View style={styles.contentHeader}>
+                            <View style={styles.contentHeaderLeft}>
+                                {task.merchant?.profilePic ? (
+                                    <Image
+                                        source={{ uri: task.merchant.profilePic }}
+                                        style={styles.contentAuthorAvatar}
+                                    />
+                                ) : (
+                                    <View style={styles.contentAuthorAvatarFallback}>
+                                        <Text style={styles.contentAuthorAvatarText}>
+                                            {task.merchant?.displayName?.charAt(0) || '?'}
+                                        </Text>
+                                    </View>
+                                )}
+                                <Text style={styles.contentAuthorName}>
+                                    {task.merchant?.displayName || 'Anonymous'}
+                                </Text>
+                            </View>
+                            <TouchableOpacity onPress={handleViewEvent} style={styles.viewLink}>
+                                <Text style={styles.viewLinkIcon}>↗</Text>
+                                <Text style={styles.viewLinkText}>View</Text>
+                            </TouchableOpacity>
+                        </View>
+
+                        {/* Post Text Content */}
+                        {cleanContent(task.eventContent) ? (
+                            <View>
+                                <Text style={styles.originalPostText}>
+                                    {isContentExpanded
+                                        ? cleanContent(task.eventContent)
+                                        : cleanContent(task.eventContent).slice(0, 240) + (cleanContent(task.eventContent).length > 240 ? '...' : '')
+                                    }
+                                </Text>
+                                {cleanContent(task.eventContent).length > 240 && (
+                                    <TouchableOpacity
+                                        onPress={() => setIsContentExpanded(!isContentExpanded)}
+                                        style={styles.readMoreButton}
+                                    >
+                                        <Text style={styles.readMoreText}>
+                                            {isContentExpanded ? 'Show less' : 'Read more'}
+                                        </Text>
+                                    </TouchableOpacity>
+                                )}
+                            </View>
+                        ) : null}
+
+                        {/* Post Images */}
+                        {extractImages(task.eventContent).length > 0 && (
+                            <View style={styles.originalPostImages}>
+                                {extractImages(task.eventContent).map((imageUrl, idx) => (
+                                    <Image
+                                        key={idx}
+                                        source={{ uri: imageUrl }}
+                                        style={styles.originalPostImage}
+                                        resizeMode="cover"
+                                    />
+                                ))}
+                            </View>
+                        )}
                     </View>
-                </View>
+                )}
 
                 {/* Sub-Tasks */}
                 <View style={styles.subTasksSection}>
@@ -440,7 +536,10 @@ export default function TaskDetailScreen({ taskId, onBack }: TaskDetailScreenPro
                             reward={task.repostWithQuoteReward}
                             completed={completedActions.repost_with_quote}
                             loading={loadingActions.repost_with_quote}
-                            onPress={() => setQuoteModalVisible(true)}
+                            onPress={() => {
+                                if (!canCompleteActions || completedActions.repost_with_quote) return;
+                                setQuoteModalVisible(true);
+                            }}
                             disabled={!canCompleteActions}
                         />
                     ) : null}
@@ -452,7 +551,10 @@ export default function TaskDetailScreen({ taskId, onBack }: TaskDetailScreenPro
                             reward={task.replyReward}
                             completed={completedActions.reply}
                             loading={loadingActions.reply}
-                            onPress={() => setReplyModalVisible(true)}
+                            onPress={() => {
+                                if (!canCompleteActions || completedActions.reply) return;
+                                setReplyModalVisible(true);
+                            }}
                             disabled={!canCompleteActions}
                         />
                     ) : null}
@@ -464,11 +566,54 @@ export default function TaskDetailScreen({ taskId, onBack }: TaskDetailScreenPro
                             reward={task.followReward}
                             completed={completedActions.follow}
                             loading={loadingActions.follow}
-                            onPress={() => handleAction('follow')}
+                            onPress={() => setFollowModalVisible(true)}
                             disabled={!canCompleteActions}
                         />
                     ) : null}
                 </View>
+
+                {/* Follow Confirmation Modal */}
+                {task && user?.pubkey && (
+                    <FollowModal
+                        isOpen={followModalVisible}
+                        onClose={() => setFollowModalVisible(false)}
+                        userPubkey={user.pubkey}
+                        targetPubkey={task.merchant?.pubkey || ''}
+                        targetDisplayName={task.merchant?.displayName}
+                        onSuccess={async (result) => {
+                            setFollowModalVisible(false);
+                            setLoadingActions((prev) => ({ ...prev, follow: true }));
+
+                            try {
+                                // Complete task in backend
+                                const completeResult = await completeTask(
+                                    task.id,
+                                    'follow',
+                                    result.signedEvent?.id || 'already_following'
+                                );
+
+                                if (completeResult.success) {
+                                    setCompletedActions((prev) => ({ ...prev, follow: true }));
+                                    setShowConfetti(true);
+                                    setTimeout(() => {
+                                        const reward = completeResult.reward || 0;
+                                        const message = result.alreadyFollowing
+                                            ? `Already following! You earned ${reward} sats!`
+                                            : `Success! 🎉 You earned ${reward} sats!`;
+                                        Alert.alert('Done!', message);
+                                    }, 300);
+                                } else {
+                                    throw new Error(completeResult.error || 'Failed to complete task');
+                                }
+                            } catch (error) {
+                                console.error('Follow success handler error:', error);
+                                Alert.alert('Action Failed', (error as Error).message);
+                            } finally {
+                                setLoadingActions((prev) => ({ ...prev, follow: false }));
+                            }
+                        }}
+                    />
+                )}
 
                 {/* Reply Modal */}
                 <Modal visible={replyModalVisible} animationType="slide" transparent>
@@ -682,22 +827,40 @@ const styles = StyleSheet.create({
         color: '#71717a',
         textTransform: 'capitalize',
     },
-    earningsCard: {
+    statsGrid: {
+        flexDirection: 'row',
+        gap: 12,
+        marginBottom: 24,
+    },
+    statCard: {
+        flex: 1,
         backgroundColor: '#18181b',
-        borderRadius: 12,
         padding: 16,
+        borderRadius: 16,
         borderWidth: 1,
         borderColor: '#27272a',
     },
-    earningsLabel: {
+    statLabel: {
+        fontSize: 11,
+        fontWeight: '600',
+        color: '#71717a',
+        textTransform: 'uppercase',
+        letterSpacing: 0.5,
+        marginBottom: 8,
+    },
+    statValueContainer: {
+        flexDirection: 'row',
+        alignItems: 'baseline',
+    },
+    statValue: {
+        fontSize: 18,
+        fontWeight: '700',
+        color: '#f97316',
+    },
+    statSubValue: {
         fontSize: 12,
         color: '#71717a',
-        marginBottom: 4,
-    },
-    earningsValue: {
-        fontSize: 24,
-        fontWeight: '700',
-        color: '#fbbf24',
+        marginLeft: 2,
     },
     eligibilityCard: {
         flexDirection: 'row',
@@ -794,23 +957,7 @@ const styles = StyleSheet.create({
         lineHeight: 22,
         marginBottom: 16,
     },
-    budgetRow: {
-        flexDirection: 'row',
-        justifyContent: 'space-between',
-        alignItems: 'center',
-        paddingTop: 12,
-        borderTopWidth: 1,
-        borderTopColor: '#27272a',
-    },
-    budgetLabel: {
-        fontSize: 13,
-        color: '#71717a',
-    },
-    budgetValue: {
-        fontSize: 14,
-        fontWeight: '600',
-        color: '#f97316',
-    },
+
     subTasksSection: {
         marginBottom: 24,
     },
@@ -953,5 +1100,108 @@ const styles = StyleSheet.create({
     ownTaskSubtext: {
         fontSize: 13,
         color: '#71717a',
+    },
+    // Content Section (Matches TaskCard.tsx)
+    contentSection: {
+        backgroundColor: '#18181b',
+        borderRadius: 16,
+        padding: 16,
+        marginBottom: 24,
+        borderWidth: 1,
+        borderColor: '#27272a',
+    },
+    contentHeader: {
+        flexDirection: 'row',
+        justifyContent: 'space-between',
+        alignItems: 'center',
+        marginBottom: 12,
+    },
+    contentHeaderLeft: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 6,
+    },
+    contentIcon: {
+        fontSize: 14,
+        color: '#a1a1aa',
+    },
+    contentLabel: {
+        fontSize: 13,
+        fontWeight: '500',
+        color: '#ffffff',
+    },
+    viewLink: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        gap: 4,
+    },
+    viewLinkIcon: {
+        fontSize: 12,
+        color: '#22c55e',
+    },
+    viewLinkText: {
+        fontSize: 12,
+        color: '#22c55e',
+        fontWeight: '500',
+    },
+    originalPostText: {
+        fontSize: 14,
+        color: '#a1a1aa',
+        lineHeight: 20,
+        marginBottom: 12,
+    },
+    originalPostImages: {
+        marginTop: 4,
+        marginBottom: 12,
+    },
+    originalPostImage: {
+        width: '100%',
+        height: 200,
+        borderRadius: 12,
+        marginBottom: 8,
+        backgroundColor: '#27272a',
+    },
+    contentAuthor: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        marginTop: 8,
+    },
+    contentAuthorAvatar: {
+        width: 20,
+        height: 20,
+        borderRadius: 10,
+        marginRight: 6,
+    },
+    contentAuthorAvatarFallback: {
+        width: 20,
+        height: 20,
+        borderRadius: 10,
+        backgroundColor: '#f97316',
+        justifyContent: 'center',
+        alignItems: 'center',
+        marginRight: 6,
+    },
+    contentAuthorAvatarText: {
+        fontSize: 10,
+        fontWeight: '700',
+        color: '#fff',
+    },
+    contentAuthorLabel: {
+        fontSize: 12,
+        color: '#71717a',
+    },
+    contentAuthorName: {
+        fontSize: 12,
+        color: '#f97316',
+        fontWeight: '500',
+    },
+    readMoreButton: {
+        marginTop: 4,
+        marginBottom: 8,
+    },
+    readMoreText: {
+        color: '#f97316',
+        fontSize: 13,
+        fontWeight: '600',
     },
 });

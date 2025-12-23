@@ -144,8 +144,17 @@ export function TaskCard({
                 <View style={styles.contentSection}>
                     <View style={styles.contentHeader}>
                         <View style={styles.contentHeaderLeft}>
-                            <Text style={styles.contentIcon}>◯</Text>
-                            <Text style={styles.contentLabel}>Content to Boost</Text>
+                            {getMerchantAvatar() ? (
+                                <Image
+                                    source={{ uri: getMerchantAvatar()! }}
+                                    style={styles.contentAuthorAvatar}
+                                />
+                            ) : (
+                                <Text style={styles.contentIcon}>◯</Text>
+                            )}
+                            <Text style={styles.contentAuthorName}>
+                                {task.merchant?.displayName || 'Anonymous'}
+                            </Text>
                         </View>
                         <TouchableOpacity onPress={handleViewEvent} style={styles.viewLink}>
                             <Text style={styles.viewLinkIcon}>↗</Text>
@@ -155,21 +164,6 @@ export function TaskCard({
                     <Text style={styles.contentText} numberOfLines={2}>
                         {truncateContent(task.eventContent, 50)}
                     </Text>
-                    {/* Content Author */}
-                    {task.merchant && (
-                        <View style={styles.contentAuthor}>
-                            {getMerchantAvatar() && (
-                                <Image
-                                    source={{ uri: getMerchantAvatar()! }}
-                                    style={styles.contentAuthorAvatar}
-                                />
-                            )}
-                            <Text style={styles.contentAuthorLabel}>By: </Text>
-                            <Text style={styles.contentAuthorName}>
-                                {task.merchant.displayName || 'Anonymous'}
-                            </Text>
-                        </View>
-                    )}
                 </View>
             )}
 

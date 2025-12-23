@@ -27,7 +27,7 @@ const BOTTOM_NAV_HEIGHT = 80;
  * Main app navigator - switches between auth and app screens
  */
 function AppNavigator() {
-  const { isLoading, isAuthenticated, logout } = useAuth();
+  const { isLoading, isAuthenticated, user, logout } = useAuth();
   const [selectedTaskId, setSelectedTaskId] = useState<string | null>(null);
   const [activeTab, setActiveTab] = useState<TabType>("tasks");
   const [showMerchantSettings, setShowMerchantSettings] = useState(false);
@@ -175,7 +175,7 @@ function AppNavigator() {
       case "publicFeed":
         return (
           <PublicFeedScreen
-            npub="6398e15e3416de093b963ca38783d2a66a9657cb08cbba4f02546cdd55b6f1a4" // Default public feed
+            npub={user?.npub || "6c27a5aa02b769c6b51fd7edd80c5b21b9ba32c16d913b2bc8e1617fb4573680"} // Use login user npub or default public feed
             onLogout={logout}
             onScroll={handleScroll}
             onViewMerchantSettings={() => setShowMerchantSettings(true)}

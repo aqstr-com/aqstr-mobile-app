@@ -81,6 +81,20 @@ export interface TaskDetailResponse {
   error?: string;
 }
 
+export interface FollowListData {
+  follows: string[];
+  content: string;
+  lastUpdated: number | null;
+}
+
+export interface FollowListResponse {
+  success: boolean;
+  followList: FollowListData;
+  dbFollowingCount: number;
+  userExists: boolean;
+  error?: string;
+}
+
 /**
  * Authenticate with Nostr signed event
  * Sends mobile=true flag to get JSON response with session cookie
@@ -155,6 +169,33 @@ export async function fetchTaskById(taskId: string, sessionCookie?: string): Pro
       success: false,
       error: (error as Error).message,
     } as TaskDetailResponse;
+  }
+}
+
+/**
+ * Fetch user's current follow list and database follow count
+ */
+export async function fetchFollowList(userPubkey: string): Promise<FollowListResponse> {
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/follow-list?pubkey=${encodeURIComponent(userPubkey)}`, {
+      headers: {
+        Accept: "application/json",
+      },
+      credentials: "include",
+    });
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+
+    const data = await response.json();
+    return data;
+  } catch (error) {
+    console.error("Fetch follow list error:", error);
+    return {
+      success: false,
+      error: (error as Error).message,
+    } as FollowListResponse;
   }
 }
 

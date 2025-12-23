@@ -1,3 +1,15 @@
+identifier: com.aqstr.app
+name: aqstr
+summary: Earn Bitcoin Through Social Tasks
+description: Earn Bitcoin Through Social Tasks
 repository: https://github.com/aqstr-com/aqstr-mobile-app
+homepage: https://aqstr.com
 assets:
   - .*.apk
+images:
+  - assets/screenshots/1.jpg
+  - assets/screenshots/2.jpg
+  - assets/screenshots/3.jpg
+  - assets/screenshots/4.jpg
+tags: nostr earn bitcoin social tasks rewards
+license: MIT
