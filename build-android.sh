@@ -27,7 +27,17 @@ if [[ "$PROFILE" == "production" ]]; then
     OLD_VERSION=$(node -p "require('./package.json').version")
     npm version patch --no-git-tag-version > /dev/null 2>&1
     NEW_VERSION=$(node -p "require('./package.json').version")
+    
+    # Also update app.json to match
+    node -e "
+      const fs = require('fs');
+      const app = JSON.parse(fs.readFileSync('./app.json', 'utf8'));
+      app.expo.version = '${NEW_VERSION}';
+      fs.writeFileSync('./app.json', JSON.stringify(app, null, 2) + '\n');
+    "
+    
     echo "   Version: ${OLD_VERSION} → ${NEW_VERSION}"
+    echo "   Updated: package.json, app.json"
     echo ""
 fi
 
