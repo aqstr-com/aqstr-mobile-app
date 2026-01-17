@@ -7,12 +7,12 @@ import {
     Modal,
     ActivityIndicator,
     ScrollView,
+    Alert,
 } from 'react-native';
 import { nip19 } from 'nostr-tools';
 import { fetchFollowList, publishToNostr, type FollowListData, type FollowListResponse } from '../lib/api';
-import { signFollowEvent, DEFAULT_RELAYS } from '../lib/nostr';
-import { getNsec } from '../lib/storage';
-import { Alert } from 'react-native';
+import { DEFAULT_RELAYS, npubToHex } from '../lib/nostr';
+import { useAuth } from '../contexts/AuthContext';
 
 interface FollowModalProps {
     isOpen: boolean;
@@ -31,6 +31,7 @@ export default function FollowModal({
     targetDisplayName,
     onSuccess,
 }: FollowModalProps) {
+    const { signEvent } = useAuth();
     const [followListData, setFollowListData] = useState<FollowListData | null>(null);
     const [dbFollowingCount, setDbFollowingCount] = useState<number>(0);
     const [userExists, setUserExists] = useState<boolean>(false);
@@ -80,18 +81,39 @@ export default function FollowModal({
             }
 
             // Not following yet, need to update follow list
-            const nsec = await getNsec();
-            if (!nsec) {
-                Alert.alert('Error', 'Please log in again');
-                setIsSubmitting(false);
-                return;
-            }
-
             // Append new follow
             const newFollowList = [...followListData.follows, targetPubkey];
 
-            // Sign the new follow list (kind 3)
-            const signedEvent = signFollowEvent(nsec, newFollowList);
+            // Create p tags for each user in the follow list
+            const pTags = newFollowList.map(pubkey => ['p', pubkey, DEFAULT_RELAYS[0], '']);
+
+            // Build unsigned follow list event (kind 3 - NIP-02)
+            const unsignedEvent = {
+                kind: 3,
+                created_at: Math.floor(Date.now() / 1000),
+                tags: pTags,
+                content: '',
+            };
+
+            // Sign via NIP-46 remote signer (Primal/Amber)
+            let signedEvent;
+            try {
+                signedEvent = await signEvent(unsignedEvent);
+            } catch (signError) {
+                const errorMessage = (signError as Error).message || 'Failed to sign';
+                // Check if it's a session issue
+                if (errorMessage.includes('session') || errorMessage.includes('log out')) {
+                    Alert.alert(
+                        'Session Expired',
+                        'Your signing session has expired. Please log out and log back in.',
+                        [{ text: 'OK', style: 'cancel' }]
+                    );
+                } else {
+                    Alert.alert('Signing Failed', errorMessage);
+                }
+                setIsSubmitting(false);
+                return;
+            }
 
             // Publish to relays
             const publishResult = await publishToNostr(signedEvent, DEFAULT_RELAYS);

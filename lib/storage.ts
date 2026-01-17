@@ -12,6 +12,10 @@ import * as LocalAuthentication from 'expo-local-authentication';
 const NSEC_KEY = 'aqstr_nsec';
 const SESSION_KEY = 'aqstr_session';
 const USER_PROFILE_KEY = 'aqstr_user_profile';
+const NIP46_SESSION_KEY = 'aqstr_nip46_session';
+const LOGIN_TYPE_KEY = 'aqstr_login_type';
+
+export type LoginType = 'nip46' | 'nsec';
 
 /**
  * Check if device supports biometric authentication
@@ -187,6 +191,8 @@ export async function clearAllCredentials(): Promise<boolean> {
         SecureStore.deleteItemAsync(NSEC_KEY),
         SecureStore.deleteItemAsync(SESSION_KEY),
         SecureStore.deleteItemAsync(USER_PROFILE_KEY),
+        SecureStore.deleteItemAsync(NIP46_SESSION_KEY),
+        SecureStore.deleteItemAsync(LOGIN_TYPE_KEY),
     ]);
 
     return true;
@@ -200,5 +206,67 @@ export async function forceClearAllCredentials(): Promise<void> {
         SecureStore.deleteItemAsync(NSEC_KEY),
         SecureStore.deleteItemAsync(SESSION_KEY),
         SecureStore.deleteItemAsync(USER_PROFILE_KEY),
+        SecureStore.deleteItemAsync(NIP46_SESSION_KEY),
+        SecureStore.deleteItemAsync(LOGIN_TYPE_KEY),
     ]);
+}
+
+// ============================================================================
+// NIP-46 Session Storage
+// ============================================================================
+
+/**
+ * Store NIP-46 session data securely
+ */
+export async function storeNip46Session(sessionData: string): Promise<void> {
+    await SecureStore.setItemAsync(NIP46_SESSION_KEY, sessionData, {
+        keychainAccessible: SecureStore.WHEN_PASSCODE_SET_THIS_DEVICE_ONLY,
+    });
+}
+
+/**
+ * Get stored NIP-46 session
+ */
+export async function getNip46Session(): Promise<string | null> {
+    return SecureStore.getItemAsync(NIP46_SESSION_KEY);
+}
+
+/**
+ * Delete NIP-46 session
+ */
+export async function deleteNip46Session(): Promise<void> {
+    await SecureStore.deleteItemAsync(NIP46_SESSION_KEY);
+}
+
+/**
+ * Check if NIP-46 session exists
+ */
+export async function hasNip46Session(): Promise<boolean> {
+    const session = await SecureStore.getItemAsync(NIP46_SESSION_KEY);
+    return session !== null && session.length > 0;
+}
+
+/**
+ * Store login type (nip46 or nsec)
+ */
+export async function storeLoginType(type: LoginType): Promise<void> {
+    await SecureStore.setItemAsync(LOGIN_TYPE_KEY, type);
+}
+
+/**
+ * Get stored login type
+ */
+export async function getLoginType(): Promise<LoginType | null> {
+    const type = await SecureStore.getItemAsync(LOGIN_TYPE_KEY);
+    if (type === 'nip46' || type === 'nsec') {
+        return type;
+    }
+    return null;
+}
+
+/**
+ * Delete login type
+ */
+export async function deleteLoginType(): Promise<void> {
+    await SecureStore.deleteItemAsync(LOGIN_TYPE_KEY);
 }

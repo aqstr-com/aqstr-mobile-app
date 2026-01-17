@@ -1,8 +1,9 @@
 /**
- * Login screen - nsec input for Nostr authentication
- * nsec is stored securely and NEVER leaves the device
+ * Login screen - NIP-46 (Nostr Connect) authentication
+ * Uses remote signer apps (Primal, Amber) for secure authentication
+ * User's nsec key NEVER enters this app
  */
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import {
     View,
     Text,
@@ -18,43 +19,177 @@ import {
     Linking,
 } from 'react-native';
 import { useAuth } from '../../contexts/AuthContext';
-import { isValidNsec } from '../../lib/nostr';
-import Svg, { Path } from 'react-native-svg';
-import { LinearGradient } from 'expo-linear-gradient';
+import QRCode from 'react-native-qrcode-svg';
+import { getPlatformSignerInfo } from '../../lib/nip46';
+
+// Suppress known react-native-svg issue with React Native 0.81+
+// This error is cosmetic and doesn't affect functionality
+const originalHandler = (global as any).ErrorUtils?.getGlobalHandler?.();
+if ((global as any).ErrorUtils?.setGlobalHandler) {
+    (global as any).ErrorUtils.setGlobalHandler((error: Error, isFatal: boolean) => {
+        if (error?.message?.includes?.('topSvgLayout')) {
+            return; // Suppress this specific error
+        }
+        if (originalHandler) {
+            originalHandler(error, isFatal);
+        }
+    });
+}
+
+// Platform-specific signer logos
+const primalLogo = require('../../assets/primal-logo.png');
+const amberLogo = require('../../assets/amber-logo.png');
 
 export default function LoginScreen() {
-    const [nsec, setNsec] = useState('');
-    const [showNsec, setShowNsec] = useState(false);
-    const { login, isLoading, error, clearError } = useAuth();
+    const [copied, setCopied] = useState(false);
 
-    // Mask the nsec input for security
-    const getMaskedValue = (value: string): string => {
-        if (showNsec || value.length <= 12) return value;
-        return `${value.slice(0, 8)}${'•'.repeat(Math.min(value.length - 12, 40))}${value.slice(-4)}`;
+    const {
+        initNostrConnect,
+        cancelConnection,
+        nostrConnectSession,
+        connectionState,
+        isLoading,
+        error,
+        clearError,
+    } = useAuth();
+
+    // Start NIP-46 connection when screen loads
+    useEffect(() => {
+        initNostrConnect();
+
+        return () => {
+            // Cleanup on unmount
+            cancelConnection();
+        };
+    }, []);
+
+
+
+    const handleRetry = () => {
+        clearError();
+        initNostrConnect();
     };
 
-    const handleLogin = async () => {
-        if (!nsec.trim()) {
-            Alert.alert('Error', 'Please enter your nsec key');
-            return;
+    const copyConnectionString = async () => {
+        if (!nostrConnectSession?.connectionString) return;
+
+        try {
+            const Clipboard = await import('expo-clipboard');
+            await Clipboard.setStringAsync(nostrConnectSession.connectionString);
+            setCopied(true);
+            setTimeout(() => setCopied(false), 2000);
+        } catch (err) {
+            console.warn('Clipboard copy failed:', err);
+            Alert.alert('Copy Failed', 'Could not copy to clipboard');
         }
+    };
 
-        const trimmedNsec = nsec.trim();
+    const openSignerApp = () => {
+        if (!nostrConnectSession?.connectionString) return;
+        Linking.openURL(nostrConnectSession.connectionString);
+    };
 
-        if (!isValidNsec(trimmedNsec)) {
-            Alert.alert(
-                'Invalid Format',
-                'Your nsec must start with "nsec1" and be a valid Nostr secret key.'
+    const { name: signerName } = getPlatformSignerInfo();
+    const signerLogo = Platform.OS === 'android' ? amberLogo : primalLogo;
+
+    const renderContent = () => {
+        // Success state
+        if (connectionState === 'success') {
+            return (
+                <View style={styles.statusContainer}>
+                    <View style={[styles.statusIcon, styles.successIcon]}>
+                        <Text style={styles.statusEmoji}>✓</Text>
+                    </View>
+                    <Text style={styles.statusTitle}>Welcome!</Text>
+                    <Text style={styles.statusText}>Login successful</Text>
+                </View>
             );
-            return;
         }
 
-        const success = await login(trimmedNsec);
-
-        if (success) {
-            // Clear the nsec from memory immediately after login
-            setNsec('');
+        // Error state
+        if (connectionState === 'error') {
+            return (
+                <View style={styles.statusContainer}>
+                    <View style={[styles.statusIcon, styles.errorIcon]}>
+                        <Text style={styles.statusEmoji}>✕</Text>
+                    </View>
+                    <Text style={styles.statusTitle}>Connection Failed</Text>
+                    <Text style={styles.errorText}>{error}</Text>
+                    <TouchableOpacity onPress={handleRetry} style={styles.retryButton}>
+                        <Text style={styles.retryButtonText}>Try Again</Text>
+                    </TouchableOpacity>
+                </View>
+            );
         }
+
+        // Generating state
+        if (connectionState === 'generating' || !nostrConnectSession) {
+            return (
+                <View style={styles.statusContainer}>
+                    <ActivityIndicator size="large" color="#9333ea" />
+                    <Text style={styles.statusText}>Generating connection...</Text>
+                </View>
+            );
+        }
+
+        // Signing state
+        if (connectionState === 'signing') {
+            return (
+                <View style={styles.statusContainer}>
+                    <ActivityIndicator size="large" color="#9333ea" />
+                    <Text style={styles.statusTitle}>Signing in...</Text>
+                    <Text style={styles.statusText}>Please approve in your signer app</Text>
+                </View>
+            );
+        }
+
+        // Waiting / Idle state - show QR code and options
+        return (
+            <>
+                {/* QR Code */}
+                <View style={styles.qrContainer}>
+                    <View style={styles.qrWrapper}>
+                        <QRCode
+                            value={nostrConnectSession.connectionString}
+                            size={200}
+                            backgroundColor="white"
+                        />
+                    </View>
+                </View>
+
+                {/* Platform-specific Login Button */}
+                <TouchableOpacity
+                    onPress={openSignerApp}
+                    style={styles.signerButton}
+                    activeOpacity={0.8}
+                >
+                    <View style={styles.signerButtonContent}>
+                        <Image source={signerLogo} style={styles.signerLogo} resizeMode="contain" />
+                        <Text style={styles.signerButtonText}>Login with {signerName}</Text>
+                    </View>
+                </TouchableOpacity>
+
+                {/* Connection Status */}
+                {connectionState === 'waiting' && (
+                    <View style={styles.waitingContainer}>
+                        <ActivityIndicator size="small" color="#a1a1aa" />
+                        <Text style={styles.waitingText}>Waiting for connection...</Text>
+                    </View>
+                )}
+
+                {/* Copy Button */}
+                <TouchableOpacity onPress={copyConnectionString} style={styles.copyButton}>
+                    <Text style={styles.copyButtonText} numberOfLines={1}>
+                        {nostrConnectSession.connectionString.substring(0, 40)}...
+                    </Text>
+                    <Text style={styles.copyIcon}>{copied ? '✓' : '📋'}</Text>
+                </TouchableOpacity>
+
+                <Text style={styles.helpText}>
+                    Scan with Primal, Amber, or any NIP-46 signer
+                </Text>
+            </>
+        );
     };
 
     return (
@@ -80,96 +215,21 @@ export default function LoginScreen() {
 
                 {/* Login Form */}
                 <View style={styles.formContainer}>
-                    <Text style={styles.label}>Enter your Nostr nsec key</Text>
+                    <Text style={styles.label}>Connect with Nostr</Text>
 
-                    <View style={styles.inputContainer}>
-                        <TextInput
-                            style={styles.input}
-                            placeholder="nsec1..."
-                            placeholderTextColor="#666"
-                            value={showNsec ? nsec : getMaskedValue(nsec)}
-                            onChangeText={(text) => {
-                                clearError();
-                                // Only update if showing actual value or if it's a new character
-                                if (showNsec || text.length > nsec.length || text.length < nsec.length) {
-                                    setNsec(showNsec ? text : (text.length < nsec.length ? nsec.slice(0, text.length) : nsec + text.slice(-1)));
-                                }
-                            }}
-                            onFocus={() => setShowNsec(true)} // Show full value when editing
-                            onBlur={() => setShowNsec(false)} // Hide when done
-                            autoCapitalize="none"
-                            autoCorrect={false}
-                            autoComplete="off"
-                            secureTextEntry={false} // We handle masking ourselves
-                            editable={!isLoading}
-                            textContentType="none"
-                        />
-                        <TouchableOpacity
-                            style={styles.eyeButton}
-                            onPress={() => setShowNsec(!showNsec)}
-                        >
-                            <Text style={styles.eyeText}>{showNsec ? '🙈' : '👁️'}</Text>
-                        </TouchableOpacity>
-                    </View>
-
-                    {error && (
-                        <View style={styles.errorContainer}>
-                            <Text style={styles.errorText}>⚠️ {error}</Text>
-                        </View>
-                    )}
-
-                    <TouchableOpacity
-                        onPress={handleLogin}
-                        disabled={isLoading}
-                        activeOpacity={0.8}
-                    >
-                        <LinearGradient
-                            colors={['#3f3f46', '#18181b', '#09090b']}
-                            start={{ x: 0, y: 0 }}
-                            end={{ x: 1, y: 1 }}
-                            style={[styles.loginButton, isLoading && styles.loginButtonDisabled]}
-                        >
-                            {isLoading ? (
-                                <ActivityIndicator color="#fff" />
-                            ) : (
-                                <View style={styles.buttonContent}>
-                                    <Image
-                                        source={require('../../assets/nostr-logo.png')}
-                                        style={styles.nostrLogo}
-                                    />
-                                    <Text style={styles.loginButtonText}>Sign In with Nostr</Text>
-                                </View>
-                            )}
-                        </LinearGradient>
-                    </TouchableOpacity>
-
-                    {/* Security Notice */}
-                    <View style={styles.securityNotice}>
-                        <Text style={styles.securityIcon}>🔐</Text>
-                        <View style={styles.securityTextContainer}>
-                            <Text style={styles.securityTitle}>Your key is secure</Text>
-                            <Text style={styles.securityText}>
-                                Your nsec is stored securely using{' '}
-                                {Platform.OS === 'ios' ? 'iOS Keychain with Face ID/Touch ID' : 'Android Keystore with biometric'} protection.
-                            </Text>
-                            <Text style={styles.securityHighlight}>
-                                ✓ Never leaves your device{'\n'}
-                                ✓ Protected by {Platform.OS === 'ios' ? 'Face ID / Touch ID' : 'biometric / PIN'}{'\n'}
-                                ✓ Used only to sign events locally
-                            </Text>
-                        </View>
-                    </View>
+                    {renderContent()}
                 </View>
 
                 {/* Open Source Link */}
                 <TouchableOpacity
                     style={styles.githubLink}
-                    onPress={() => Linking.openURL('https://github.com/aqstr-com/aqstr-mobile-app')}
+                    onPress={() => Linking.openURL('https://github.com/AqstrOfficial/aqstr-mobile-app')}
                 >
-                    <Svg width={24} height={24} viewBox="0 0 24 24" fill="#71717a">
-                        <Path d="M12 0c-6.626 0-12 5.373-12 12 0 5.302 3.438 9.8 8.207 11.387.599.111.793-.261.793-.577v-2.234c-3.338.726-4.033-1.416-4.033-1.416-.546-1.387-1.333-1.756-1.333-1.756-1.089-.745.083-.729.083-.729 1.205.084 1.839 1.237 1.839 1.237 1.07 1.834 2.807 1.304 3.492.997.107-.775.418-1.305.762-1.604-2.665-.305-5.467-1.334-5.467-5.931 0-1.311.469-2.381 1.236-3.221-.124-.303-.535-1.524.117-3.176 0 0 1.008-.322 3.301 1.23.957-.266 1.983-.399 3.003-.404 1.02.005 2.047.138 3.006.404 2.291-1.552 3.297-1.23 3.297-1.23.653 1.653.242 2.874.118 3.176.77.84 1.235 1.911 1.235 3.221 0 4.609-2.807 5.624-5.479 5.921.43.372.823 1.102.823 2.222v3.293c0 .319.192.694.801.576 4.765-1.589 8.199-6.086 8.199-11.386 0-6.627-5.373-12-12-12z" />
-                    </Svg>
-
+                    <Image
+                        source={require('../../assets/GitHub_Invertocat_White_Clearspace.png')}
+                        style={styles.githubLogo}
+                        resizeMode="contain"
+                    />
                 </TouchableOpacity>
             </ScrollView>
         </KeyboardAvoidingView>
@@ -188,13 +248,7 @@ const styles = StyleSheet.create({
     },
     header: {
         alignItems: 'center',
-        marginBottom: 48,
-    },
-    logoText: {
-        fontSize: 42,
-        fontWeight: '800',
-        color: '#f97316',
-        marginBottom: 8,
+        marginBottom: 32,
     },
     logo: {
         width: 180,
@@ -216,107 +270,146 @@ const styles = StyleSheet.create({
         fontSize: 14,
         fontWeight: '600',
         color: '#e4e4e7',
+        marginBottom: 20,
+        textAlign: 'center',
+    },
+    // QR Code
+    qrContainer: {
+        alignItems: 'center',
+        marginBottom: 16,
+    },
+    qrWrapper: {
+        padding: 12,
+        backgroundColor: 'white',
+        borderRadius: 12,
+    },
+    qrImage: {
+        width: 200,
+        height: 200,
+    },
+    // Signer button
+    signerButton: {
+        backgroundColor: '#F1A026',
+        paddingVertical: 14,
+        paddingHorizontal: 20,
+        borderRadius: 12,
+        alignItems: 'center',
         marginBottom: 12,
     },
-    inputContainer: {
-        flexDirection: 'row',
-        alignItems: 'center',
-        backgroundColor: '#27272a',
-        borderRadius: 12,
-        borderWidth: 1,
-        borderColor: '#3f3f46',
-        marginBottom: 16,
-    },
-    input: {
-        flex: 1,
-        padding: 16,
-        fontSize: 16,
-        color: '#fff',
-        fontFamily: Platform.OS === 'ios' ? 'Menlo' : 'monospace',
-    },
-    eyeButton: {
-        padding: 16,
-    },
-    eyeText: {
-        fontSize: 18,
-    },
-    errorContainer: {
-        backgroundColor: '#7f1d1d',
-        padding: 12,
-        borderRadius: 8,
-        marginBottom: 16,
-    },
-    errorText: {
-        color: '#fca5a5',
-        fontSize: 14,
-    },
-    loginButton: {
-        backgroundColor: '#9333ea',
-        paddingVertical: 16,
-        borderRadius: 12,
-        alignItems: 'center',
-        marginBottom: 20,
-    },
-    loginButtonDisabled: {
-        opacity: 0.6,
-    },
-    loginButtonText: {
-        color: '#fff',
-        fontSize: 18,
-        fontWeight: '700',
-    },
-    buttonContent: {
+    signerButtonContent: {
         flexDirection: 'row',
         alignItems: 'center',
         gap: 10,
     },
-    nostrLogo: {
+    signerLogo: {
         width: 24,
         height: 24,
+        borderRadius: 6,
     },
-    securityNotice: {
+    signerButtonText: {
+        color: '#fff',
+        fontSize: 16,
+        fontWeight: '600',
+    },
+    // Waiting status
+    waitingContainer: {
         flexDirection: 'row',
-        alignItems: 'flex-start',
-        backgroundColor: '#052e16',
-        padding: 16,
-        borderRadius: 12,
-        borderWidth: 1,
-        borderColor: '#166534',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 8,
+        marginBottom: 12,
     },
-    securityIcon: {
-        fontSize: 24,
-        marginRight: 12,
-        marginTop: 2,
+    waitingText: {
+        color: '#a1a1aa',
+        fontSize: 14,
     },
-    securityTextContainer: {
+    // Copy button
+    copyButton: {
+        flexDirection: 'row',
+        alignItems: 'center',
+        justifyContent: 'center',
+        gap: 8,
+        backgroundColor: '#27272a',
+        paddingVertical: 10,
+        paddingHorizontal: 16,
+        borderRadius: 8,
+        marginBottom: 12,
+    },
+    copyButtonText: {
+        color: '#71717a',
+        fontSize: 12,
         flex: 1,
     },
-    securityTitle: {
+    copyIcon: {
         fontSize: 14,
-        fontWeight: '700',
-        color: '#22c55e',
-        marginBottom: 4,
     },
-    securityText: {
+    helpText: {
+        color: '#71717a',
         fontSize: 12,
-        color: '#86efac',
-        lineHeight: 18,
+        textAlign: 'center',
+        marginBottom: 16,
+    },
+
+    // Status displays
+    statusContainer: {
+        alignItems: 'center',
+        paddingVertical: 32,
+    },
+    statusIcon: {
+        width: 64,
+        height: 64,
+        borderRadius: 32,
+        alignItems: 'center',
+        justifyContent: 'center',
+        marginBottom: 16,
+    },
+    successIcon: {
+        backgroundColor: '#16a34a',
+    },
+    errorIcon: {
+        backgroundColor: '#dc2626',
+    },
+    statusEmoji: {
+        fontSize: 28,
+        color: '#fff',
+    },
+    statusTitle: {
+        fontSize: 20,
+        fontWeight: '600',
+        color: '#fff',
         marginBottom: 8,
     },
-    securityHighlight: {
-        fontSize: 12,
-        color: '#4ade80',
-        lineHeight: 18,
+    statusText: {
+        color: '#a1a1aa',
+        fontSize: 14,
+        textAlign: 'center',
     },
+    errorText: {
+        color: '#fca5a5',
+        fontSize: 14,
+        textAlign: 'center',
+        marginBottom: 16,
+    },
+    retryButton: {
+        backgroundColor: '#27272a',
+        paddingHorizontal: 24,
+        paddingVertical: 12,
+        borderRadius: 8,
+    },
+    retryButtonText: {
+        color: '#fff',
+        fontSize: 14,
+        fontWeight: '600',
+    },
+    // GitHub link
     githubLink: {
         flexDirection: 'row',
         alignItems: 'center',
         justifyContent: 'center',
         paddingVertical: 16,
-        gap: 8,
     },
-    githubText: {
-        fontSize: 14,
-        color: '#71717a',
+    githubLogo: {
+        width: 32,
+        height: 32,
     },
 });

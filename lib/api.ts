@@ -24,6 +24,7 @@ export interface Task {
   repostWithQuoteReward?: number;
   replyReward?: number;
   followReward?: number;
+  nip05Verified?: boolean;
   merchant?: {
     id: string;
     pubkey: string;
@@ -81,20 +82,6 @@ export interface TaskDetailResponse {
   error?: string;
 }
 
-export interface FollowListData {
-  follows: string[];
-  content: string;
-  lastUpdated: number | null;
-}
-
-export interface FollowListResponse {
-  success: boolean;
-  followList: FollowListData;
-  dbFollowingCount: number;
-  userExists: boolean;
-  error?: string;
-}
-
 /**
  * Authenticate with Nostr signed event
  * Sends mobile=true flag to get JSON response with session cookie
@@ -141,6 +128,76 @@ export async function authenticateWithNostr(signedEvent: any, contentSign: strin
 }
 
 /**
+ * Get authentication challenge from server
+ * Used for NIP-46 challenge-response authentication
+ */
+export async function getAuthChallenge(): Promise<{ challenge: string; expiresAt: number } | null> {
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/auth/challenge`);
+
+    if (!response.ok) {
+      console.error("Failed to get auth challenge:", response.status);
+      return null;
+    }
+
+    const data = await response.json();
+    return {
+      challenge: data.challenge,
+      expiresAt: data.expiresAt || Date.now() + 5 * 60 * 1000,
+    };
+  } catch (error) {
+    console.error("Get auth challenge error:", error);
+    return null;
+  }
+}
+
+/**
+ * Authenticate with NIP-46 signed event (kind 22242)
+ * Uses challenge-response flow for enhanced security
+ */
+export async function authenticateWithNip46(
+  signedEvent: any,
+  challenge: string
+): Promise<{ success: boolean; error?: string; sessionCookie?: string; user?: any }> {
+  try {
+    const formData = new FormData();
+    formData.append("event", JSON.stringify(signedEvent));
+    formData.append("challenge", challenge);
+    formData.append("authMethod", "nip46");
+    formData.append("mobile", "true"); // Flag to get JSON response instead of redirect
+
+    console.log("🔐 Authenticating with NIP-46 via /nostr-auth...");
+    const response = await fetch(`${API_BASE_URL}/nostr-auth`, {
+      method: "POST",
+      body: formData,
+    });
+
+    const data = await response.json();
+
+    if (data.success && data.sessionCookie) {
+      console.log("✅ NIP-46 auth successful, session cookie received");
+      return {
+        success: true,
+        sessionCookie: data.sessionCookie,
+        user: data.user,
+      };
+    } else {
+      console.log("❌ NIP-46 auth failed:", data.error);
+      return {
+        success: false,
+        error: data.error || "Authentication failed",
+      };
+    }
+  } catch (error) {
+    console.error("NIP-46 auth error:", error);
+    return {
+      success: false,
+      error: (error as Error).message,
+    };
+  }
+}
+
+/**
  * Fetch task details by ID from API endpoint
  */
 export async function fetchTaskById(taskId: string, sessionCookie?: string): Promise<TaskDetailResponse> {
@@ -169,33 +226,6 @@ export async function fetchTaskById(taskId: string, sessionCookie?: string): Pro
       success: false,
       error: (error as Error).message,
     } as TaskDetailResponse;
-  }
-}
-
-/**
- * Fetch user's current follow list and database follow count
- */
-export async function fetchFollowList(userPubkey: string): Promise<FollowListResponse> {
-  try {
-    const response = await fetch(`${API_BASE_URL}/api/follow-list?pubkey=${encodeURIComponent(userPubkey)}`, {
-      headers: {
-        Accept: "application/json",
-      },
-      credentials: "include",
-    });
-
-    if (!response.ok) {
-      throw new Error(`HTTP ${response.status}`);
-    }
-
-    const data = await response.json();
-    return data;
-  } catch (error) {
-    console.error("Fetch follow list error:", error);
-    return {
-      success: false,
-      error: (error as Error).message,
-    } as FollowListResponse;
   }
 }
 
@@ -349,6 +379,7 @@ export async function publishToNostr(signedEvent: any, relays: string[] = ["wss:
     };
   }
 }
+
 
 
 /**
@@ -1152,6 +1183,56 @@ export async function fetchUserInfos(pubkeys: string[]): Promise<{ success: bool
     return {
       success: false,
       users: [],
+      error: (error as Error).message,
+    };
+  }
+}
+
+/**
+ * Follow list data structure
+ */
+export interface FollowListData {
+  follows: string[];
+  content: string;
+  lastUpdated: number | null;
+}
+
+/**
+ * Response from follow list API
+ */
+export interface FollowListResponse {
+  success: boolean;
+  followList: FollowListData;
+  dbFollowingCount: number;
+  userExists: boolean;
+  error?: string;
+}
+
+/**
+ * Fetch user's follow list from the backend
+ * @param pubkey - User's hex pubkey
+ */
+export async function fetchFollowList(pubkey: string): Promise<FollowListResponse> {
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/follow-list?pubkey=${encodeURIComponent(pubkey)}`);
+
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+
+    const data = await response.json();
+    return data;
+  } catch (error) {
+    console.error("Fetch follow list error:", error);
+    return {
+      success: false,
+      followList: {
+        follows: [],
+        content: "",
+        lastUpdated: null,
+      },
+      dbFollowingCount: 0,
+      userExists: false,
       error: (error as Error).message,
     };
   }

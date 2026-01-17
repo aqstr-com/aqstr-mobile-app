@@ -15,16 +15,9 @@ import {
     Image,
     Linking,
 } from 'react-native';
+import { nip19 } from 'nostr-tools';
 import { useAuth } from '../../../contexts/AuthContext';
-import { getNsec } from '../../../lib/storage';
-import {
-    signLikeEvent,
-    signRepostEvent,
-    signReplyEvent,
-    signQuoteEvent,
-    signFollowEvent,
-    DEFAULT_RELAYS,
-} from '../../../lib/nostr';
+import { DEFAULT_RELAYS } from '../../../lib/nostr';
 import {
     fetchTaskById,
     publishToNostr,
@@ -35,6 +28,8 @@ import {
 } from '../../../lib/api';
 import ConfettiExplosion from '../../../components/ConfettiExplosion';
 import FollowModal from '../../../components/FollowModal';
+
+const MIN_CONTENT_LENGTH = 10;
 
 interface TaskDetailScreenProps {
     taskId: string;
@@ -96,7 +91,7 @@ function SubTaskButton({
 }
 
 export default function TaskDetailScreen({ taskId, onBack }: TaskDetailScreenProps) {
-    const { user } = useAuth();
+    const { user, signEvent } = useAuth();
 
     const [task, setTask] = useState<Task | null>(null);
     const [isLoading, setIsLoading] = useState(true);
@@ -198,43 +193,79 @@ export default function TaskDetailScreen({ taskId, onBack }: TaskDetailScreenPro
             setLoadingActions((prev) => ({ ...prev, [actionType]: true }));
 
             try {
-                const nsec = await getNsec();
-                if (!nsec) {
-                    Alert.alert('Error', 'Please log in again');
-                    return;
-                }
-
                 if (!task.eventId || !task.merchant?.pubkey) {
                     Alert.alert('Error', 'Task data is incomplete');
                     return;
                 }
 
-                let signedEvent;
+                // Build unsigned event based on action type (NIP-46 remote signer will add pubkey and sign)
+                let unsignedEvent: { kind: number; created_at: number; tags: string[][]; content: string };
 
                 switch (actionType) {
                     case 'like':
-                        signedEvent = signLikeEvent(nsec, task.eventId, task.merchant.pubkey);
+                        // Kind 7 - reaction event
+                        unsignedEvent = {
+                            kind: 7,
+                            created_at: Math.floor(Date.now() / 1000),
+                            tags: [
+                                ['e', task.eventId],
+                                ['p', task.merchant.pubkey],
+                            ],
+                            content: '+',
+                        };
                         break;
                     case 'repost':
-                        signedEvent = signRepostEvent(nsec, task.eventId, task.merchant.pubkey);
+                        // Kind 6 - repost event (NIP-18)
+                        unsignedEvent = {
+                            kind: 6,
+                            created_at: Math.floor(Date.now() / 1000),
+                            tags: [
+                                ['e', task.eventId, DEFAULT_RELAYS[0]],
+                                ['p', task.merchant.pubkey],
+                            ],
+                            content: '',
+                        };
                         break;
                     case 'repost_with_quote':
                         if (!content) {
                             Alert.alert('Error', 'Quote content is required');
                             return;
                         }
-                        signedEvent = signQuoteEvent(nsec, task.eventId, task.merchant.pubkey, content);
+                        // Kind 1 with q tag - quote repost
+                        const noteId = nip19.noteEncode(task.eventId);
+                        unsignedEvent = {
+                            kind: 1,
+                            created_at: Math.floor(Date.now() / 1000),
+                            tags: [
+                                ['e', task.eventId, '', 'mention'],
+                                ['p', task.merchant.pubkey],
+                                ['q', task.eventId],
+                            ],
+                            content: `${content} nostr:${noteId}`,
+                        };
                         break;
                     case 'reply':
                         if (!content) {
                             Alert.alert('Error', 'Reply content is required');
                             return;
                         }
-                        signedEvent = signReplyEvent(nsec, task.eventId, task.merchant.pubkey, content);
+                        // Kind 1 with e tag - reply event
+                        unsignedEvent = {
+                            kind: 1,
+                            created_at: Math.floor(Date.now() / 1000),
+                            tags: [
+                                ['e', task.eventId, '', 'reply'],
+                                ['p', task.merchant.pubkey],
+                            ],
+                            content: content,
+                        };
                         break;
                     default:
                         throw new Error('Unknown action type');
                 }
+
+                // Sign via NIP-46 remote signer (Primal/Amber)
+                const signedEvent = await signEvent(unsignedEvent);
 
                 // Publish to relays
                 const publishResult = await publishToNostr(signedEvent, DEFAULT_RELAYS);
@@ -264,11 +295,21 @@ export default function TaskDetailScreen({ taskId, onBack }: TaskDetailScreenPro
             } catch (error) {
                 console.error('Action error:', error);
                 const errorMessage = (error as Error).message || 'Something went wrong';
-                Alert.alert(
-                    'Action Failed',
-                    errorMessage,
-                    [{ text: 'OK', style: 'cancel' }]
-                );
+
+                // Check if it's a NIP-46 session issue
+                if (errorMessage.includes('session') || errorMessage.includes('log out') || errorMessage.includes('NIP-46')) {
+                    Alert.alert(
+                        'Signing Session Expired',
+                        'Unable to sign with remote signer. Please log out and log back in to restore your signing session.',
+                        [{ text: 'OK', style: 'cancel' }]
+                    );
+                } else {
+                    Alert.alert(
+                        'Action Failed',
+                        errorMessage,
+                        [{ text: 'OK', style: 'cancel' }]
+                    );
+                }
             } finally {
                 setLoadingActions((prev) => ({ ...prev, [actionType]: false }));
                 setReplyModalVisible(false);
@@ -277,7 +318,7 @@ export default function TaskDetailScreen({ taskId, onBack }: TaskDetailScreenPro
                 setQuoteContent('');
             }
         },
-        [task]
+        [task, signEvent]
     );
 
     // Loading state
@@ -317,8 +358,11 @@ export default function TaskDetailScreen({ taskId, onBack }: TaskDetailScreenPro
         (task.replyReward || 0) +
         (task.followReward || 0);
 
+
     const isEligible = eligibilityStatus?.isEligible !== false;
-    const canCompleteActions = isEligible && !isOwnTask;
+    // Disable actions if NIP-05 is required but user doesn't have one
+    const hasNip05Issue = task.nip05Verified === true && !user?.nip05;
+    const canCompleteActions = isEligible && !isOwnTask && !hasNip05Issue;
 
     // Check if all available actions are completed
     const availableActions = [
@@ -431,6 +475,29 @@ export default function TaskDetailScreen({ taskId, onBack }: TaskDetailScreenPro
                         <View style={styles.eligibilityContent}>
                             <Text style={styles.eligibleTitle}>Eligible</Text>
                             <Text style={styles.eligibleSubtext}>You can complete this task</Text>
+                        </View>
+                    </View>
+                )}
+
+                {/* NIP-05 Required Warning */}
+                {!isOwnTask && !isFullyCompleted && task.nip05Verified === true && !user?.nip05 && (
+                    <View style={styles.nip05WarningCard}>
+                        <Text style={styles.nip05WarningIcon}>⚠️</Text>
+                        <View style={styles.nip05WarningContent}>
+                            <Text style={styles.nip05WarningTitle}>Nostr Address Required</Text>
+                            <Text style={styles.nip05WarningText}>
+                                This task requires a verified Nostr address (NIP-05) to help reduce spam. Set up your Nostr address to participate.
+                            </Text>
+                            <TouchableOpacity
+                                style={styles.nip05LinkButton}
+                                onPress={() => {
+                                    const npub = user?.npub || '';
+                                    const url = `https://nip-05.com?npub=${npub}`;
+                                    Linking.openURL(url);
+                                }}
+                            >
+                                <Text style={styles.nip05LinkButtonText}>Get a Nostr Address →</Text>
+                            </TouchableOpacity>
                         </View>
                     </View>
                 )}
@@ -628,7 +695,22 @@ export default function TaskDetailScreen({ taskId, onBack }: TaskDetailScreenPro
                                 onChangeText={setReplyContent}
                                 multiline
                                 numberOfLines={4}
+                                maxLength={280}
                             />
+                            <View style={styles.charCountRow}>
+                                <Text style={[
+                                    styles.charCountText,
+                                    replyContent.trim().length > 0 && replyContent.trim().length < MIN_CONTENT_LENGTH && styles.charCountWarning
+                                ]}>
+                                    {replyContent.length}/280 characters{replyContent.trim().length > 0 && replyContent.trim().length < MIN_CONTENT_LENGTH ? ` (min ${MIN_CONTENT_LENGTH})` : ''}
+                                </Text>
+                            </View>
+                            <View style={styles.noticeBox}>
+                                <Text style={styles.noticeIcon}>ℹ️</Text>
+                                <Text style={styles.noticeText}>
+                                    Please add a genuine, thoughtful response that contributes to the conversation.
+                                </Text>
+                            </View>
                             <View style={styles.modalButtons}>
                                 <TouchableOpacity
                                     style={styles.modalCancelButton}
@@ -640,9 +722,9 @@ export default function TaskDetailScreen({ taskId, onBack }: TaskDetailScreenPro
                                     <Text style={styles.modalCancelText}>Cancel</Text>
                                 </TouchableOpacity>
                                 <TouchableOpacity
-                                    style={[styles.modalSubmitButton, !replyContent && styles.modalSubmitDisabled]}
+                                    style={[styles.modalSubmitButton, replyContent.trim().length < MIN_CONTENT_LENGTH && styles.modalSubmitDisabled]}
                                     onPress={() => handleAction('reply', replyContent)}
-                                    disabled={!replyContent || loadingActions.reply}
+                                    disabled={replyContent.trim().length < MIN_CONTENT_LENGTH || loadingActions.reply}
                                 >
                                     {loadingActions.reply ? (
                                         <ActivityIndicator color="#fff" size="small" />
@@ -668,7 +750,22 @@ export default function TaskDetailScreen({ taskId, onBack }: TaskDetailScreenPro
                                 onChangeText={setQuoteContent}
                                 multiline
                                 numberOfLines={4}
+                                maxLength={280}
                             />
+                            <View style={styles.charCountRow}>
+                                <Text style={[
+                                    styles.charCountText,
+                                    quoteContent.trim().length > 0 && quoteContent.trim().length < MIN_CONTENT_LENGTH && styles.charCountWarning
+                                ]}>
+                                    {quoteContent.length}/280 characters{quoteContent.trim().length > 0 && quoteContent.trim().length < MIN_CONTENT_LENGTH ? ` (min ${MIN_CONTENT_LENGTH})` : ''}
+                                </Text>
+                            </View>
+                            <View style={styles.noticeBox}>
+                                <Text style={styles.noticeIcon}>ℹ️</Text>
+                                <Text style={styles.noticeText}>
+                                    Please add a genuine, thoughtful response that contributes to the conversation.
+                                </Text>
+                            </View>
                             <View style={styles.modalButtons}>
                                 <TouchableOpacity
                                     style={styles.modalCancelButton}
@@ -680,9 +777,9 @@ export default function TaskDetailScreen({ taskId, onBack }: TaskDetailScreenPro
                                     <Text style={styles.modalCancelText}>Cancel</Text>
                                 </TouchableOpacity>
                                 <TouchableOpacity
-                                    style={[styles.modalSubmitButton, !quoteContent && styles.modalSubmitDisabled]}
+                                    style={[styles.modalSubmitButton, quoteContent.trim().length < MIN_CONTENT_LENGTH && styles.modalSubmitDisabled]}
                                     onPress={() => handleAction('repost_with_quote', quoteContent)}
-                                    disabled={!quoteContent || loadingActions.repost_with_quote}
+                                    disabled={quoteContent.trim().length < MIN_CONTENT_LENGTH || loadingActions.repost_with_quote}
                                 >
                                     {loadingActions.repost_with_quote ? (
                                         <ActivityIndicator color="#fff" size="small" />
@@ -912,6 +1009,46 @@ const styles = StyleSheet.create({
     eligibleSubtext: {
         fontSize: 13,
         color: '#86efac',
+    },
+    nip05WarningCard: {
+        flexDirection: 'row',
+        alignItems: 'flex-start',
+        backgroundColor: '#451a03',
+        borderRadius: 12,
+        padding: 16,
+        marginBottom: 16,
+        borderWidth: 1,
+        borderColor: '#92400e',
+    },
+    nip05WarningIcon: {
+        fontSize: 24,
+        marginRight: 12,
+    },
+    nip05WarningContent: {
+        flex: 1,
+    },
+    nip05WarningTitle: {
+        fontSize: 16,
+        fontWeight: '600',
+        color: '#fbbf24',
+        marginBottom: 4,
+    },
+    nip05WarningText: {
+        fontSize: 13,
+        color: '#fcd34d',
+        marginBottom: 12,
+    },
+    nip05LinkButton: {
+        backgroundColor: '#f59e0b',
+        paddingVertical: 10,
+        paddingHorizontal: 16,
+        borderRadius: 8,
+        alignSelf: 'flex-start',
+    },
+    nip05LinkButtonText: {
+        color: '#18181b',
+        fontWeight: '600',
+        fontSize: 14,
     },
     completedCard: {
         flexDirection: 'row',
@@ -1203,5 +1340,38 @@ const styles = StyleSheet.create({
         color: '#f97316',
         fontSize: 13,
         fontWeight: '600',
+    },
+    charCountRow: {
+        flexDirection: 'row',
+        justifyContent: 'flex-start',
+        marginTop: 8,
+        marginBottom: 12,
+    },
+    charCountText: {
+        fontSize: 12,
+        color: '#71717a',
+    },
+    charCountWarning: {
+        color: '#f59e0b',
+    },
+    noticeBox: {
+        flexDirection: 'row',
+        backgroundColor: 'rgba(59, 130, 246, 0.1)',
+        borderWidth: 1,
+        borderColor: 'rgba(59, 130, 246, 0.3)',
+        borderRadius: 8,
+        padding: 12,
+        marginBottom: 16,
+        alignItems: 'flex-start',
+        gap: 8,
+    },
+    noticeIcon: {
+        fontSize: 14,
+    },
+    noticeText: {
+        flex: 1,
+        fontSize: 13,
+        color: '#60a5fa',
+        lineHeight: 18,
     },
 });

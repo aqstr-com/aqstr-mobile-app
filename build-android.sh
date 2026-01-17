@@ -21,9 +21,20 @@ for arg in "$@"; do
     fi
 done
 
+# Auto-bump version for production builds
+if [[ "$PROFILE" == "production" ]]; then
+    echo "📦 Auto-bumping patch version for production build..."
+    OLD_VERSION=$(node -p "require('./package.json').version")
+    npm version patch --no-git-tag-version > /dev/null 2>&1
+    NEW_VERSION=$(node -p "require('./package.json').version")
+    echo "   Version: ${OLD_VERSION} → ${NEW_VERSION}"
+    echo ""
+fi
+
 # Generate timestamp for unique filenames
 TIMESTAMP=$(date +"%Y%m%d_%H%M%S")
-OUTPUT_FILENAME="aqstr-${PROFILE}-${TIMESTAMP}.apk"
+VERSION=$(node -p "require('./package.json').version")
+OUTPUT_FILENAME="aqstr-v${VERSION}-${PROFILE}.apk"
 
 # Check if --local flag is provided, otherwise do cloud build
 if [[ "$*" == *"--local"* ]]; then
@@ -46,7 +57,7 @@ if [[ "$*" == *"--local"* ]]; then
         echo "   $(pwd)/builds/${OUTPUT_FILENAME}"
         echo ""
         echo "💡 To create a GitHub release:"
-        echo "   ./release-to-github.sh v1.0.0 \"Release notes\" ./builds/${OUTPUT_FILENAME}"
+        echo "   ./release-to-github.sh \"Release notes\" ./builds/${OUTPUT_FILENAME}"
     fi
 else
     # Run EAS build in cloud (will appear in EAS dashboard)
@@ -64,7 +75,7 @@ else
         echo "   1. Download APK from EAS dashboard:"
         echo "      https://expo.dev/accounts/[your-account]/projects/aqstr-mobile/builds"
         echo "   2. Create GitHub release:"
-        echo "      ./release-to-github.sh v1.0.0 \"Release notes\" <path-to-downloaded-apk>"
+        echo "      ./release-to-github.sh \"Release notes\" <path-to-downloaded-apk>"
     fi
 fi
 

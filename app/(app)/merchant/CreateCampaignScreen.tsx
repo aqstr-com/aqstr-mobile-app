@@ -26,7 +26,7 @@ import {
     type NostrEvent,
     type MerchantSettings,
 } from '../../../lib/api';
-import { eventIdToHex, signTextNote } from '../../../lib/nostr';
+import { eventIdToHex } from '../../../lib/nostr';
 import { nip19 } from 'nostr-tools';
 import PaymentModal from '../../../components/PaymentModal';
 
@@ -51,7 +51,7 @@ export default function CreateCampaignScreen({
     targetPubkey,
     onClearTargetPubkey,
 }: CreateCampaignScreenProps) {
-    const { user, getNsec } = useAuth();
+    const { user, signEvent, loginType } = useAuth();
 
     // Tab state
     const [activeTab, setActiveTab] = useState<'create' | 'existing'>('create');
@@ -229,17 +229,23 @@ export default function CreateCampaignScreen({
             return;
         }
 
-        // Get nsec from secure storage
-        const nsec = await getNsec();
-        if (!nsec) {
-            Alert.alert('Error', 'Private key not available. Please re-login.');
+        if (loginType !== 'nip46') {
+            Alert.alert('Error', 'Please re-login with NIP-46 to sign events');
             return;
         }
 
         setIsCreatingPost(true);
         try {
-            // Sign the event locally
-            const signedEvent = signTextNote(nsec, newPostContent.trim());
+            // Create unsigned event
+            const unsignedEvent = {
+                kind: 1,
+                created_at: Math.floor(Date.now() / 1000),
+                tags: [],
+                content: newPostContent.trim(),
+            };
+
+            // Sign the event using NIP-46 remote signer
+            const signedEvent = await signEvent(unsignedEvent);
 
             // Publish to relays
             const publishResult = await publishToNostr(signedEvent);

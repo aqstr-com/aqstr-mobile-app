@@ -1,7 +1,8 @@
 #!/bin/bash
 
 # GitHub Release Script for AQSTR Mobile
-# Usage: ./release-to-github.sh <version> <release-notes> [apk-path]
+# Usage: ./release-to-github.sh <release-notes> [apk-path]
+# Version is automatically read from package.json
 
 set -e
 
@@ -12,29 +13,22 @@ YELLOW='\033[1;33m'
 NC='\033[0m' # No Color
 
 # Check if required arguments are provided
-if [ $# -lt 2 ]; then
+if [ $# -lt 1 ]; then
     echo -e "${RED}Error: Missing required arguments${NC}"
-    echo "Usage: $0 <version> <release-notes> [apk-path]"
+    echo "Usage: $0 <release-notes> [apk-path]"
     echo ""
     echo "Examples:"
-    echo "  $0 v1.0.0 \"Initial release\" ./builds/app-release.apk"
-    echo "  $0 v1.0.0 \"Initial release\"  # Will prompt for APK path"
+    echo "  $0 \"Initial release\" ./builds/app-release.apk"
+    echo "  $0 \"Bug fixes and improvements\"  # Will search for APK"
     exit 1
 fi
 
-VERSION=$1
-RELEASE_NOTES=$2
-APK_PATH=${3:-""}
+# Auto-read version from package.json
+VERSION="v$(node -p "require('./package.json').version")"
+RELEASE_NOTES=$1
+APK_PATH=${2:-""}
 
-# Validate version format (should start with 'v')
-if [[ ! $VERSION =~ ^v[0-9]+\.[0-9]+\.[0-9]+ ]]; then
-    echo -e "${YELLOW}Warning: Version should follow semantic versioning (e.g., v1.0.0)${NC}"
-    read -p "Continue anyway? (y/n) " -n 1 -r
-    echo
-    if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-        exit 1
-    fi
-fi
+echo -e "${GREEN}Detected version from package.json: ${VERSION}${NC}"
 
 # Check if GitHub CLI is installed
 if ! command -v gh &> /dev/null; then
